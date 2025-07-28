@@ -237,6 +237,8 @@
             border-radius: 8px;
             overflow: hidden;
             background: white;
+            max-height: 400px;
+            overflow-y: auto;
         }
         
         .data-table {
@@ -252,6 +254,9 @@
             font-size: 14px;
             color: #374151;
             border-bottom: 1px solid #e5e7eb;
+            position: sticky;
+            top: 0;
+            z-index: 10;
         }
         
         .data-table td {
@@ -658,6 +663,11 @@
         
         async function processFile(file) {
             try {
+                // Validate file size (10MB limit)
+                if (file.size > 10 * 1024 * 1024) {
+                    throw new Error('File size exceeds 10MB limit. Please upload a smaller file.');
+                }
+                
                 currentFile = file;
                 showProgress();
                 updateProgress(10, 'Processing file...');
@@ -779,61 +789,337 @@
             const lines = text.split('\n').filter(line => line.trim());
             const data = [];
             
-            // Enhanced parsing with multiple strategies
+            // Try to detect tabular data patterns
+            const tabularPatterns = [
+                // Pattern 1: Tab-separated values
+                /\t/,
+                // Pattern 2: Multiple consecutive spaces (likely column alignment)
+                /\s{3,}/,
+                // Pattern 3: Pipe-separated values
+                /\|/,
+                // Pattern 4: Comma-separated (CSV-like)
+                /,\s*/
+            ];
+            
+            let detectedPattern = null;
+            let patternCount = 0;
+            
+            // Detect the most common pattern
+            for (const pattern of tabularPatterns) {
+                const count = lines.filter(line => pattern.test(line)).length;
+                if (count > patternCount) {
+                    patternCount = count;
+                    detectedPattern = pattern;
+                }
+            }
+            
+            // If we found a pattern, use it to parse the data
+            if (detectedPattern && patternCount > lines.length * 0.3) {
+                return parseWithPattern(lines, detectedPattern);
+            }
+            
+            // Fallback: Try to parse as general structured data
+            return parseGeneralStructure(lines);
+        }
+        
+        function parseWithPattern(lines, pattern) {
+            const data = [];
+            const headers = [];
+            let headerFound = false;
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                
+                let columns;
+                if (pattern.source === '\\t') {
+                    columns = line.split('\t');
+                } else if (pattern.source === '\\s{3,}') {
+                    columns = line.split(/\s{3,}/);
+                } else if (pattern.source === '\\|') {
+                    columns = line.split('|').map(col => col.trim());
+                } else if (pattern.source === ',\\s*') {
+                    columns = line.split(/,\s*/);
+                }
+                
+                columns = columns.map(col => col.trim()).filter(col => col);
+                
+                if (columns.length < 2) continue;
+                
+                // First valid line becomes headers
+                if (!headerFound) {
+                    headers.push(...columns);
+                    headerFound = true;
+                    continue;
+                }
+                
+                // Create row object
+                const row = {};
+                for (let j = 0; j < Math.max(headers.length, columns.length); j++) {
+                    const header = headers[j] || `Column ${j + 1}`;
+                    const value = columns[j] || '';
+                    row[header] = value;
+                }
+                
+                data.push(row);
+            }
+            
+            return data;
+        }
+        
+        function parseGeneralStructure(lines) {
+            const data = [];
+            
             for (const line of lines) {
                 const cleanLine = line.trim().replace(/\s+/g, ' ');
                 if (!cleanLine || cleanLine.length < 5) continue;
                 
-                // Strategy 1: Look for ticker patterns (2-5 uppercase letters)
+                // Try different parsing strategies
+                
+                // Strategy 1: Look for ticker/symbol patterns (financial data)
                 const tickerMatch = cleanLine.match(/\b([A-Z]{2,5})\b/);
                 if (tickerMatch) {
                     const parts = cleanLine.split(/\s+/);
                     const tickerIndex = parts.findIndex(part => part === tickerMatch[1]);
                     
                     if (tickerIndex > 0) {
-                        let companyName = parts.slice(0, tickerIndex).join(' ');
+                        const companyName = parts.slice(0, tickerIndex).join(' ').replace(/^(The\s+)/i, '').trim();
                         const ticker = tickerMatch[1];
+                        const remainingParts = parts.slice(tickerIndex + 1);
+                        
+                        const numbers = remainingParts.filter(part => /^[\d,]+\.?\d*$/.test(part));
+                        const dates = remainingParts.filter(part => /^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(part));
+                        
                         let marketCap = '';
                         let price = '';
-                        let date = '';
-                        let other = '';
                         
-                        // Look for numeric values after ticker
-                        const remainingParts = parts.slice(tickerIndex + 1);
-                        const numbers = [];
-                        const dates = [];
-                        
-                        for (const part of remainingParts) {
-                            // Check for numbers (with commas and decimals)
-                            if (part.match(/^[\d,]+\.?\d*$/)) {
-                                numbers.push(part);
-                            }
-                            // Check for dates (MM/DD format)
-                            else if (part.match(/^\d{2}\/\d{2}$/)) {
-                                dates.push(part);
-                            }
-                        }
-                        
-                        // Assign the largest number as market cap, others as price
                         if (numbers.length > 0) {
                             const numericValues = numbers.map(n => parseFloat(n.replace(/,/g, '')));
                             const maxIndex = numericValues.indexOf(Math.max(...numericValues));
                             marketCap = numbers[maxIndex];
                             
-                            // Find price (usually smaller number)
                             const priceCandidate = numbers.find((n, i) => i !== maxIndex);
                             if (priceCandidate) price = priceCandidate;
                         }
                         
-                        if (dates.length > 0) {
-                            date = dates[0];
-                        }
-                        
-                        other = remainingParts.join(' ');
-                        
-                        // Clean up company name (remove common prefixes/suffixes)
-                        companyName = companyName.replace(/^(The\s+)/i, '').trim();
-                        
-                        if (companyName && ticker && (marketCap || numbers.length > 0)) {
+                        if (companyName && ticker) {
                             data.push({
-                                'Company Name': companyName
+                                'Company Name': companyName,
+                                'Ticker': ticker,
+                                'Market Cap': marketCap,
+                                'Price': price,
+                                'Date': dates[0] || '',
+                                'Other': remainingParts.join(' ')
+                            });
+                            continue;
+                        }
+                    }
+                }
+                
+                // Strategy 2: Name-Value pairs
+                const nameValueMatch = cleanLine.match(/^([^:]+):\s*(.+)$/);
+                if (nameValueMatch) {
+                    data.push({
+                        'Field': nameValueMatch[1].trim(),
+                        'Value': nameValueMatch[2].trim()
+                    });
+                    continue;
+                }
+                
+                // Strategy 3: Numbered items
+                const numberedMatch = cleanLine.match(/^(\d+)\.?\s+(.+)$/);
+                if (numberedMatch) {
+                    data.push({
+                        'Number': numberedMatch[1],
+                        'Description': numberedMatch[2].trim()
+                    });
+                    continue;
+                }
+                
+                // Strategy 4: Date patterns with following data
+                const dateMatch = cleanLine.match(/^(\d{1,2}\/\d{1,2}\/?\d{0,4})\s+(.+)$/);
+                if (dateMatch) {
+                    const remainingText = dateMatch[2];
+                    const parts = remainingText.split(/\s+/);
+                    const numbers = parts.filter(part => /^[\d,]+\.?\d*$/.test(part));
+                    const text = parts.filter(part => !/^[\d,]+\.?\d*$/.test(part)).join(' ');
+                    
+                    data.push({
+                        'Date': dateMatch[1],
+                        'Description': text,
+                        'Amount': numbers[0] || '',
+                        'Additional': numbers.slice(1).join(', ')
+                    });
+                    continue;
+                }
+                
+                // Strategy 5: Generic word splitting (fallback)
+                const words = cleanLine.split(/\s+/);
+                if (words.length >= 2) {
+                    const row = {};
+                    words.forEach((word, index) => {
+                        row[`Column ${index + 1}`] = word;
+                    });
+                    data.push(row);
+                }
+            }
+            
+            return data;
+        }
+        
+        function displayResults(text, parsedData) {
+            // Show extracted text
+            extractedText.value = text;
+            extractedTextSection.style.display = 'block';
+            
+            // Store the data globally
+            extractedData = parsedData;
+            
+            if (parsedData.length === 0) {
+                showError('No tabular data could be extracted from the document. Please check the OCR settings or try a different file.');
+                return;
+            }
+            
+            // Create table
+            createTable(parsedData);
+            tableSection.style.display = 'block';
+            downloadSection.style.display = 'block';
+        }
+        
+        function createTable(data) {
+            if (data.length === 0) return;
+            
+            // Get all unique keys from all rows
+            const allKeys = new Set();
+            data.forEach(row => {
+                Object.keys(row).forEach(key => allKeys.add(key));
+            });
+            
+            const headers = Array.from(allKeys);
+            
+            // Create table HTML
+            let tableHTML = '<thead><tr>';
+            headers.forEach(header => {
+                tableHTML += `<th>${escapeHtml(header)}</th>`;
+            });
+            tableHTML += '</tr></thead><tbody>';
+            
+            data.forEach(row => {
+                tableHTML += '<tr>';
+                headers.forEach(header => {
+                    const value = row[header] || '';
+                    tableHTML += `<td>${escapeHtml(value)}</td>`;
+                });
+                tableHTML += '</tr>';
+            });
+            
+            tableHTML += '</tbody>';
+            dataTable.innerHTML = tableHTML;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function downloadExcel() {
+            if (extractedData.length === 0) {
+                showError('No data to download. Please process a file first.');
+                return;
+            }
+            
+            try {
+                // Create workbook
+                const wb = XLSX.utils.book_new();
+                
+                // Convert data to worksheet
+                const ws = XLSX.utils.json_to_sheet(extractedData);
+                
+                // Auto-size columns
+                const colWidths = [];
+                const headers = Object.keys(extractedData[0] || {});
+                
+                headers.forEach((header, index) => {
+                    let maxWidth = header.length;
+                    extractedData.forEach(row => {
+                        const cellValue = String(row[header] || '');
+                        maxWidth = Math.max(maxWidth, cellValue.length);
+                    });
+                    colWidths[index] = { width: Math.min(maxWidth + 2, 50) };
+                });
+                
+                ws['!cols'] = colWidths;
+                
+                // Add worksheet to workbook
+                XLSX.utils.book_append_sheet(wb, ws, 'OCR Data');
+                
+                // Generate filename with timestamp
+                const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+                const filename = `OCR_Extract_${timestamp}.xlsx`;
+                
+                // Download file
+                XLSX.writeFile(wb, filename);
+                
+                showSuccess(`Excel file "${filename}" has been downloaded successfully!`);
+                
+            } catch (error) {
+                showError('Error creating Excel file: ' + error.message);
+                console.error('Excel export error:', error);
+            }
+        }
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add some helpful tips or initialize any default states
+            console.log('OCR to Excel Converter loaded successfully');
+            
+            // Add file size validation
+            fileInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file && file.size > 10 * 1024 * 1024) {
+                    showError('File size exceeds 10MB limit. Please select a smaller file.');
+                    this.value = '';
+                }
+            });
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Ctrl/Cmd + U to upload
+                if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+                    e.preventDefault();
+                    fileInput.click();
+                }
+                
+                // Ctrl/Cmd + D to download (if data available)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'd' && extractedData.length > 0) {
+                    e.preventDefault();
+                    downloadExcel();
+                }
+            });
+        });
+        
+        // Add error handling for uncaught errors
+        window.addEventListener('error', function(e) {
+            console.error('Uncaught error:', e.error);
+            showError('An unexpected error occurred. Please try refreshing the page.');
+        });
+        
+        // Add support for paste functionality
+        document.addEventListener('paste', function(e) {
+            const items = e.clipboardData.items;
+            for (let item of items) {
+                if (item.type.startsWith('image/')) {
+                    const file = item.getAsFile();
+                    if (file) {
+                        processFile(file);
+                        e.preventDefault();
+                        break;
+                    }
+                }
+            }
+        });
+        
+    </script>
+</body>
+</html>
