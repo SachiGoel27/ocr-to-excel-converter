@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR to Excel Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .main-content {
+            padding: 40px;
+        }
+        
+        .upload-section {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .drop-zone {
+            border: 3px dashed #4facfe;
+            border-radius: 15px;
+            padding: 60px 40px;
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.1) 0%, rgba(0, 242, 254, 0.1) 100%);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .drop-zone:hover {
+            border-color: #00f2fe;
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.2) 0%, rgba(0, 242, 254, 0.2) 100%);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(79, 172, 254, 0.3);
+        }
+        
+        .drop-zone.dragover {
+            border-color: #00f2fe;
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.3) 0%, rgba(0, 242, 254, 0.3) 100%);
+            transform: scale(1.02);
+        }
+        
+        .upload-icon {
+            font-size: 4em;
+            color: #4facfe;
+            margin-bottom: 20px;
+            display: block;
+        }
+        
+        .upload-text {
+            font-size: 1.3em;
+            color: #333;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        
+        .upload-subtext {
+            color: #666;
+            font-size: 1em;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .progress-section {
+            margin: 30px 0;
+            display: none;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #e0e0e0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 5px;
+        }
+        
+        .progress-text {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .extracted-text {
+            margin: 30px 0;
+            display: none;
+        }
+        
+        .text-area {
+            width: 100%;
+            height: 200px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            padding: 15px;
+            background: #f8f9fa;
+            resize: vertical;
+        }
+        
+        .table-section {
+            margin: 30px 0;
+            display: none;
+        }
+        
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+        }
+        
+        .data-table th {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 500;
+        }
+        
+        .data-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .data-table tr:hover {
+            background: rgba(79, 172, 254, 0.05);
+        }
+        
+        .download-section {
+            text-align: center;
+            margin-top: 30px;
+            display: none;
+        }
+        
+        .download-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 50px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+        }
+        
+        .error-message {
+            background: #ff6b6b;
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: none;
+        }
+        
+        .success-message {
+            background: #51cf66;
+            color: white;  
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: none;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .processing {
+            animation: pulse 2s infinite;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                padding: 20px;
+            }
+            
+            .drop-zone {
+                padding: 40px 20px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 OCR to Excel Converter</h1>
+            <p>Upload PDF or image files and convert them to Excel spreadsheets instantly</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="upload-section">
+                <div class="drop-zone" id="dropZone">
+                    <span class="upload-icon">📄</span>
+                    <div class="upload-text">Drop your PDF or image here</div>
+                    <div class="upload-subtext">or click to browse files (PDF, PNG, JPG supported)</div>
+                    <input type="file" id="fileInput" class="file-input" accept=".pdf,.png,.jpg,.jpeg">
+                </div>
+            </div>
+            
+            <div class="progress-section" id="progressSection">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Initializing...</div>
+            </div>
+            
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+            
+            <div class="extracted-text" id="extractedTextSection">
+                <h3>📝 Extracted Text</h3>
+                <textarea class="text-area" id="extractedText" readonly></textarea>
+            </div>
+            
+            <div class="table-section" id="tableSection">
+                <h3>📋 Parsed Data</h3>
+                <div style="overflow-x: auto;">
+                    <table class="data-table" id="dataTable"></table>
+                </div>
+            </div>
+            
+            <div class="download-section" id="downloadSection">
+                <button class="download-btn" id="downloadBtn">
+                    📥 Download Excel File
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let extractedData = [];
+        
+        // Initialize PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        // DOM elements
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const progressSection = document.getElementById('progressSection');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const extractedTextSection = document.getElementById('extractedTextSection');
+        const extractedText = document.getElementById('extractedText');
+        const tableSection = document.getElementById('tableSection');
+        const dataTable = document.getElementById('dataTable');
+        const downloadSection = document.getElementById('downloadSection');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        
+        // Event listeners
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', handleDragOver);
+        dropZone.addEventListener('dragleave', handleDragLeave);
+        dropZone.addEventListener('drop', handleDrop);
+        fileInput.addEventListener('change', handleFileSelect);
+        downloadBtn.addEventListener('click', downloadExcel);
+        
+        function handleDragOver(e) {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        }
+        
+        function handleDragLeave(e) {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        }
+        
+        function handleDrop(e) {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFile(files[0]);
+            }
+        }
+        
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                processFile(file);
+            }
+        }
+        
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            successMessage.style.display = 'none';
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 5000);
+        }
+        
+        function showSuccess(message) {
+            successMessage.textContent = message;
+            successMessage.style.display = 'block';
+            errorMessage.style.display = 'none';
+            setTimeout(() => {
+                successMessage.style.display = 'none';
+            }, 3000);
+        }
+        
+        function updateProgress(percentage, text) {
+            progressFill.style.width = percentage + '%';
+            progressText.textContent = text;
+        }
+        
+        function showProgress() {
+            progressSection.style.display = 'block';
+            dropZone.classList.add('processing');
+        }
+        
+        function hideProgress() {
+            progressSection.style.display = 'none';
+            dropZone.classList.remove('processing');
+        }
+        
+        async function processFile(file) {
+            try {
+                showProgress();
+                updateProgress(10, 'Processing file...');
+                
+                let images = [];
+                
+                if (file.type === 'application/pdf') {
+                    images = await pdfToImages(file);
+                } else if (file.type.startsWith('image/')) {
+                    images = [file];
+                } else {
+                    throw new Error('Unsupported file type. Please upload PDF, PNG, or JPG files.');
+                }
+                
+                updateProgress(30, 'Performing OCR...');
+                const text = await extractTextFromImages(images);
+                
+                updateProgress(80, 'Parsing data...');
+                const parsedData = parseTextToTable(text);
+                
+                updateProgress(100, 'Complete!');
+                
+                displayResults(text, parsedData);
+                hideProgress();
+                showSuccess('File processed successfully!');
+                
+            } catch (error) {
+                hideProgress();
+                showError('Error processing file: ' + error.message);
+                console.error('Processing error:', error);
+            }
+        }
+        
+        async function pdfToImages(pdfFile) {
+            const arrayBuffer = await pdfFile.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+            const images = [];
+            
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const scale = 2.0;
+                const viewport = page.getViewport({scale});
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                
+                await page.render({canvasContext: context, viewport}).promise;
+                
+                const blob = await new Promise(resolve => {
+                    canvas.toBlob(resolve, 'image/png');
+                });
+                
+                images.push(blob);
+            }
+            
+            return images;
+        }
+        
+        async function extractTextFromImages(images) {
+            let allText = '';
+            
+            for (let i = 0; i < images.length; i++) {
+                updateProgress(30 + (40 * (i / images.length)), `OCR processing page ${i + 1}/${images.length}...`);
+                
+                const result = await Tesseract.recognize(images[i], 'eng', {
+                    logger: m => {
+                        if (m.status === 'recognizing text') {
+                            const pageProgress = m.progress * 40 / images.length;
+                            updateProgress(30 + (40 * i / images.length) + pageProgress, 
+                                `OCR processing page ${i + 1}/${images.length}... ${Math.round(m.progress * 100)}%`);
+                        }
+                    }
+                });
+                
+                allText += result.data.text + '\n';
+            }
+            
+            return allText;
+        }
+        
+        function parseTextToTable(text) {
+            const lines = text.split('\n').filter(line => line.trim());
+            const data = [];
+            
+            for (const line of lines) {
+                const cleanLine = line.trim();
+                if (!cleanLine) continue;
+                
+                // Enhanced parsing logic for stock data
+                const parts = cleanLine.split(/\s+/);
+                
+                // Look for patterns that match stock data
+                if (parts.length >= 3) {
+                    let companyName = '';
+                    let ticker = '';
+                    let marketCap = '';
+                    let price = '';
+                    let date = '';
+                    let other = '';
+                    
+                    // Try to identify ticker (usually 2-5 uppercase letters)
+                    let tickerIndex = -1;
+                    for (let i = 0; i < parts.length; i++) {
+                        if (parts[i].match(/^[A-Z]{2,5}$/)) {
+                            tickerIndex = i;
+                            ticker = parts[i];
+                            break;
+                        }
+                    }
+                    
+                    if (tickerIndex > 0) {
+                        // Company name is before ticker
+                        companyName = parts.slice(0, tickerIndex).join(' ');
+                        
+                        // Look for numbers after ticker
+                        for (let i = tickerIndex + 1; i < parts.length; i++) {
+                            const part = parts[i].replace(/,/g, '');
+                            if (part.match(/^\d+\.?\d*$/)) {
+                                if (!marketCap) {
+                                    marketCap = parts[i];
+                                } else if (!price) {
+                                    price = parts[i];
+                                }
+                            } else if (part.match(/^\d{2}\/\d{2}$/)) {
+                                date = parts[i];
+                            }
+                        }
+                        
+                        other = parts.slice(tickerIndex + 1).join(' ');
+                        
+                        if (companyName && ticker) {
+                            data.push({
+                                'Company Name': companyName,
+                                'Ticker': ticker,
+                                'Market Cap ($M)': marketCap,
+                                'Price': price,
+                                'Date': date,
+                                'Other Info': other
+                            });
+                        }
+                    }
+                }
+            }
+            
+            return data;
+        }
+        
+        function displayResults(text, data) {
+            // Show extracted text
+            extractedText.value = text;
+            extractedTextSection.style.display = 'block';
+            
+            // Show parsed table
+            if (data.length > 0) {
+                extractedData = data;
+                renderTable(data);
+                tableSection.style.display = 'block';
+                downloadSection.style.display = 'block';
+            } else {
+                showError('No structured data found. Please try a different image or check the text format.');
+            }
+        }
+        
+        function renderTable(data) {
+            if (data.length === 0) return;
+            
+            const headers = Object.keys(data[0]);
+            
+            let html = '<thead><tr>';
+            headers.forEach(header => {
+                html += `<th>${header}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            data.forEach(row => {
+                html += '<tr>';
+                headers.forEach(header => {
+                    html += `<td>${row[header] || ''}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</tbody>';
+            dataTable.innerHTML = html;
+        }
+        
+        function downloadExcel() {
+            if (extractedData.length === 0) {
+                showError('No data to download');
+                return;
+            }
+            
+            try {
+                const ws = XLSX.utils.json_to_sheet(extractedData);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'OCR Data');
+                
+                // Auto-fit column widths
+                const colWidths = [];
+                const headers = Object.keys(extractedData[0]);
+                headers.forEach((header, i) => {
+                    let maxWidth = header.length;
+                    extractedData.forEach(row => {
+                        const cellValue = String(row[header] || '');
+                        maxWidth = Math.max(maxWidth, cellValue.length);
+                    });
+                    colWidths.push({wch: Math.min(maxWidth + 2, 50)});
+                });
+                ws['!cols'] = colWidths;
+                
+                const fileName = `ocr_output_${new Date().toISOString().slice(0, 10)}.xlsx`;
+                XLSX.writeFile(wb, fileName);
+                
+                showSuccess('Excel file downloaded successfully!');
+            } catch (error) {
+                showError('Error generating Excel file: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
