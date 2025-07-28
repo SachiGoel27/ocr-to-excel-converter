@@ -585,12 +585,14 @@
             
             switch(mode) {
                 case 'contrast':
-                    // Increase contrast
-                    const contrast = 1.5;
+                    // Enhanced contrast specifically for financial tables
+                    const contrast = 2.0; // Increased contrast
+                    const brightness = 10; // Slight brightness boost
                     for (let i = 0; i < data.length; i += 4) {
-                        data[i] = Math.min(255, Math.max(0, contrast * (data[i] - 128) + 128));
-                        data[i + 1] = Math.min(255, Math.max(0, contrast * (data[i + 1] - 128) + 128));
-                        data[i + 2] = Math.min(255, Math.max(0, contrast * (data[i + 2] - 128) + 128));
+                        // Apply contrast and brightness
+                        data[i] = Math.min(255, Math.max(0, contrast * (data[i] - 128) + 128 + brightness));
+                        data[i + 1] = Math.min(255, Math.max(0, contrast * (data[i + 1] - 128) + 128 + brightness));
+                        data[i + 2] = Math.min(255, Math.max(0, contrast * (data[i + 2] - 128) + 128 + brightness));
                     }
                     break;
                     
@@ -654,6 +656,64 @@
             ctx.putImageData(imageData, 0, 0);
         }
         
+        function optimizeForFinancialTables(canvas) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            
+            // Convert to grayscale first
+            for (let i = 0; i < data.length; i += 4) {
+                const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+                data[i] = gray;
+                data[i + 1] = gray;
+                data[i + 2] = gray;
+            }
+            
+            // Apply high contrast threshold
+            const threshold = 128;
+            for (let i = 0; i < data.length; i += 4) {
+                const value = data[i] > threshold ? 255 : 0;
+                data[i] = value;
+                data[i + 1] = value;
+                data[i + 2] = value;
+            }
+            
+            // Apply slight dilation to connect characters
+            const width = canvas.width;
+            const height = canvas.height;
+            const newData = new Uint8ClampedArray(data);
+            
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = (y * width + x) * 4;
+                    
+                    // If current pixel is black, check neighbors
+                    if (data[idx] === 0) {
+                        // Check 3x3 neighborhood for white pixels
+                        let hasWhiteNeighbor = false;
+                        for (let dy = -1; dy <= 1 && !hasWhiteNeighbor; dy++) {
+                            for (let dx = -1; dx <= 1 && !hasWhiteNeighbor; dx++) {
+                                const nIdx = ((y + dy) * width + (x + dx)) * 4;
+                                if (data[nIdx] === 255) {
+                                    hasWhiteNeighbor = true;
+                                }
+                            }
+                        }
+                        
+                        if (hasWhiteNeighbor) {
+                            newData[idx] = newData[idx + 1] = newData[idx + 2] = 0;
+                        }
+                    }
+                }
+            }
+            
+            for (let i = 0; i < data.length; i++) {
+                data[i] = newData[i];
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+        
         async function reprocessFile() {
             if (!currentFile) return;
             reprocessBtn.disabled = true;
@@ -708,7 +768,7 @@
             const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
             const images = [];
             const dpi = parseInt(document.getElementById('dpiScale').value);
-            const scale = dpi / 72; // PDF default is 72 DPI
+            const scale = Math.max(2.0, dpi / 72); // Minimum 2x scaling for better OCR
             
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
@@ -725,6 +785,9 @@
                 const preprocessMode = document.getElementById('preprocessMode').value;
                 if (preprocessMode !== 'auto') {
                     preprocessImage(canvas, preprocessMode);
+                } else {
+                    // Auto mode: apply financial table optimization
+                    optimizeForFinancialTables(canvas);
                 }
                 
                 const blob = await new Promise(resolve => {
@@ -749,7 +812,9 @@
                 tessedit_ocr_engine_mode: parseInt(ocrMode),
                 tessedit_pageseg_mode: parseInt(psmMode),
                 tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,()/$%&-+:/ ',
-                preserve_interword_spaces: '1'
+                preserve_interword_spaces: '1',
+                tessedit_create_hocr: '1',
+                tessedit_make_box_file: '0'
             };
             
             for (let i = 0; i < images.length; i++) {
@@ -789,37 +854,151 @@
             const lines = text.split('\n').filter(line => line.trim());
             const data = [];
             
-            // Try to detect tabular data patterns
-            const tabularPatterns = [
-                // Pattern 1: Tab-separated values
-                /\t/,
-                // Pattern 2: Multiple consecutive spaces (likely column alignment)
-                /\s{3,}/,
-                // Pattern 3: Pipe-separated values
-                /\|/,
-                // Pattern 4: Comma-separated (CSV-like)
-                /,\s*/
-            ];
+            // Enhanced parsing specifically for financial/stock data
+            let headers = [];
+            let headerFound = false;
             
-            let detectedPattern = null;
-            let patternCount = 0;
-            
-            // Detect the most common pattern
-            for (const pattern of tabularPatterns) {
-                const count = lines.filter(line => pattern.test(line)).length;
-                if (count > patternCount) {
-                    patternCount = count;
-                    detectedPattern = pattern;
+            // Look for header patterns first
+            for (let i = 0; i < Math.min(lines.length, 10); i++) {
+                const line = lines[i].trim();
+                
+                // Check if this looks like a header line
+                if (line.toLowerCase().includes('company') && line.toLowerCase().includes('ticker') || 
+                    line.toLowerCase().includes('name') && line.toLowerCase().includes('symbol') ||
+                    line.includes('Market Cap') || line.includes('Price')) {
+                    
+                    // Extract headers from this line
+                    const potentialHeaders = line.split(/\s{2,}|\t/);
+                    if (potentialHeaders.length >= 3) {
+                        headers = potentialHeaders.map(h => h.trim()).filter(h => h);
+                        headerFound = true;
+                        
+                        // Remove this line from processing
+                        lines.splice(i, 1);
+                        break;
+                    }
                 }
             }
             
-            // If we found a pattern, use it to parse the data
-            if (detectedPattern && patternCount > lines.length * 0.3) {
-                return parseWithPattern(lines, detectedPattern);
+            // Default headers if none found
+            if (!headerFound) {
+                headers = ['Company Name', 'Ticker', 'Market Cap ($ Millions)', 'Price', 'Date', 'Quarter'];
             }
             
-            // Fallback: Try to parse as general structured data
-            return parseGeneralStructure(lines);
+            // Process each line looking for stock data
+            for (const line of lines) {
+                const cleanLine = line.trim().replace(/\s+/g, ' ');
+                if (!cleanLine || cleanLine.length < 10) continue;
+                
+                // Skip lines that look like headers or navigation
+                if (cleanLine.toLowerCase().includes('enter two') || 
+                    cleanLine.toLowerCase().includes('minimum market') ||
+                    cleanLine.toLowerCase().includes('number of stocks') ||
+                    cleanLine.toLowerCase().includes('get stock') ||
+                    cleanLine.toLowerCase().includes('top 50 companies') ||
+                    cleanLine.includes('alphabetical order')) {
+                    continue;
+                }
+                
+                // Look for stock ticker patterns (2-5 uppercase letters)
+                const tickerMatches = cleanLine.match(/\b([A-Z]{2,5})\b/g);
+                if (!tickerMatches) continue;
+                
+                // Find the most likely ticker (usually the shortest uppercase sequence)
+                const ticker = tickerMatches.reduce((shortest, current) => 
+                    current.length < shortest.length ? current : shortest
+                );
+                
+                const tickerIndex = cleanLine.indexOf(ticker);
+                if (tickerIndex === -1) continue;
+                
+                // Extract company name (everything before ticker)
+                let companyName = cleanLine.substring(0, tickerIndex).trim();
+                
+                // Clean up company name
+                companyName = companyName
+                    .replace(/^\d+\s*/, '') // Remove leading numbers
+                    .replace(/^[^\w]+/, '') // Remove leading non-word chars
+                    .replace(/\s+/g, ' ') // Normalize spaces
+                    .trim();
+                
+                if (!companyName) continue;
+                
+                // Extract data after ticker
+                const afterTicker = cleanLine.substring(tickerIndex + ticker.length).trim();
+                const parts = afterTicker.split(/\s+/);
+                
+                // Look for numbers that could be market cap, price, etc.
+                const numbers = [];
+                const dates = [];
+                
+                for (const part of parts) {
+                    // Match numbers with commas and decimals
+                    if (/^[\d,]+\.?\d*$/.test(part)) {
+                        numbers.push(part);
+                    }
+                    // Match date patterns
+                    else if (/^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(part)) {
+                        dates.push(part);
+                    }
+                }
+                
+                // Assign values based on typical patterns
+                let marketCap = '';
+                let price = '';
+                let date = dates[0] || '';
+                let quarter = '';
+                
+                if (numbers.length > 0) {
+                    // Usually the largest number is market cap
+                    const numericValues = numbers.map(n => parseFloat(n.replace(/,/g, '')));
+                    const maxValue = Math.max(...numericValues);
+                    const maxIndex = numericValues.indexOf(maxValue);
+                    
+                    marketCap = numbers[maxIndex];
+                    
+                    // Price is usually a smaller number
+                    const otherNumbers = numbers.filter((_, i) => i !== maxIndex);
+                    if (otherNumbers.length > 0) {
+                        price = otherNumbers[0];
+                    }
+                }
+                
+                // Look for quarter info (like 07/31, 09/30, etc.)
+                const quarterMatch = afterTicker.match(/\d{2}\/\d{2}/g);
+                if (quarterMatch && quarterMatch.length > 1) {
+                    quarter = quarterMatch[quarterMatch.length - 1];
+                }
+                
+                // Create row object
+                const row = {};
+                row[headers[0] || 'Company Name'] = companyName;
+                row[headers[1] || 'Ticker'] = ticker;
+                row[headers[2] || 'Market Cap ($ Millions)'] = marketCap;
+                row[headers[3] || 'Price'] = price;
+                row[headers[4] || 'Date'] = date;
+                row[headers[5] || 'Quarter'] = quarter;
+                
+                // Add any additional data
+                const remainingParts = parts.filter(part => 
+                    !numbers.includes(part) && 
+                    !dates.includes(part) && 
+                    part !== quarter
+                ).join(' ');
+                
+                if (remainingParts) {
+                    row['Additional Info'] = remainingParts;
+                }
+                
+                data.push(row);
+            }
+            
+            // If no stock data found, try generic parsing
+            if (data.length === 0) {
+                return parseGeneralStructure(lines);
+            }
+            
+            return data;
         }
         
         function parseWithPattern(lines, pattern) {
